@@ -25,6 +25,7 @@ load_dotenv()
 CHROMA_DIR = "chroma_db"
 DOCS_DIR = "documents"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+SIMILARITY_THRESHOLD = 0.35
 
 model = ChatGroq(
     model="llama-3.1-8b-instant",
@@ -70,11 +71,41 @@ def ingestion_agent() -> Chroma:
 
 
 # ─── Agent 2: Retrieval ───────────────────────────────────────────────────
-def retrieval_agent(vectorstore: Chroma, question: str) -> list:
+def retrieval_agent(vectorstore: Chroma, question: str) -> AgentResult:
     print(f"\n🔎 Retrieval Agent: Searching top 3 chunks...")
-    results = vectorstore.similarity_search(question, k=3)
-    print(f"   Retrieved {len(results)} chunks.")
-    return results
+    try:
+        scored_results = vectorstore.similarity_search_with_relevance_scores(question, k=3)
+    except Exception as e:
+        print(f"   ❌ Retrieval failed: {e}")
+        return AgentResult(
+            status="error",
+            error=str(e),
+            is_retryable=True,
+            metadata={"agent": "retrieval"},
+        )
+
+    relevant = [(doc, score) for doc, score in scored_results if score >= SIMILARITY_THRESHOLD]
+
+    if not relevant:
+        scores_str = ", ".join(f"{s:.2f}" for _, s in scored_results)
+        print(f"   ⚠️  All chunks below threshold ({SIMILARITY_THRESHOLD}). Scores: [{scores_str}]")
+        return AgentResult(
+            status="no_results",
+            data=[],
+            metadata={"agent": "retrieval", "reason": "below_threshold", "scores": [s for _, s in scored_results]},
+        )
+
+    print(f"   Retrieved {len(relevant)} chunks above threshold ({SIMILARITY_THRESHOLD}).")
+    for doc, score in relevant:
+        src = doc.metadata.get("source", "unknown")
+        pg = doc.metadata.get("page", "?")
+        print(f"     • {os.path.basename(src)} p.{pg} — score {score:.2f}")
+
+    return AgentResult(
+        status="success",
+        data=relevant,
+        metadata={"agent": "retrieval", "count": len(relevant)},
+    )
 
 
 # ─── Agent 3: Answer ──────────────────────────────────────────────────────
@@ -158,7 +189,12 @@ def orchestrator(vectorstore: Chroma, question: str, history: list) -> str:
     print(f"\n{'='*60}")
     print(f"🧠 Orchestrator: Pipeline for: {question!r}")
     print(f"{'='*60}")
-    chunks = retrieval_agent(vectorstore, question)
+    retrieval_result = retrieval_agent(vectorstore, question)
+    if retrieval_result.status == "error":
+        return f"Retrieval error: {retrieval_result.error}"
+    if retrieval_result.status == "no_results":
+        return "I couldn't find any relevant information in the documents to answer your question."
+    chunks = [doc for doc, score in retrieval_result.data]
     initial = answer_agent(question, chunks, history)
     critique = critic_agent(question, chunks, initial)
     final = refiner_agent(question, chunks, initial, critique, history)
