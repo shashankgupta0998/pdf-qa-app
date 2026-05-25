@@ -382,3 +382,44 @@ def test_refiner_agent_prompt_requests_citations():
         system_msg = call_args[0].content
 
         assert "cite" in system_msg.lower() or "citation" in system_msg.lower() or "[Source:" in system_msg
+
+
+def test_answer_agent_prompt_has_anti_fabrication_instructions():
+    """answer_agent prompt explicitly allows 'unclear' / 'not stated' outputs."""
+    from app import answer_agent, AgentResult
+
+    doc = Document(page_content="Some content.", metadata={"source": "doc.pdf", "page": 0})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Answer."
+        mock_model.invoke.return_value = mock_response
+
+        answer_agent("question", chunks, [])
+
+        call_args = mock_model.invoke.call_args[0][0]
+        system_msg = call_args[0].content
+
+        assert "unclear" in system_msg.lower() or "not stated" in system_msg.lower()
+        assert "do not" in system_msg.lower() and ("guess" in system_msg.lower() or "fabricat" in system_msg.lower() or "supplement" in system_msg.lower())
+
+
+def test_critic_agent_checks_for_fabrication():
+    """critic_agent prompt specifically checks for fabricated/unsourced claims."""
+    from app import critic_agent, AgentResult
+
+    doc = Document(page_content="Content.", metadata={"source": "doc.pdf", "page": 0})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "NO ISSUES"
+        mock_model.invoke.return_value = mock_response
+
+        critic_agent("question", chunks, "answer")
+
+        call_args = mock_model.invoke.call_args[0][0]
+        system_msg = call_args[0].content
+
+        assert "fabricat" in system_msg.lower() or "invented" in system_msg.lower() or "not in the source" in system_msg.lower()

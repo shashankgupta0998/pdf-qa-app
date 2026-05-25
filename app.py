@@ -134,8 +134,12 @@ def answer_agent(question: str, chunks: list, history: list) -> AgentResult:
         SystemMessage(content=(
             "You answer questions strictly from the provided PDF context. "
             "If the answer is not in the context, say so. Be concise and factual. "
-            "Use the conversation history to understand follow-up questions.\n\n"
-            "Examples of how to handle borderline cases:\n\n"
+            "Use the conversation history to understand follow-up questions."
+            "\n\nIf a specific detail (date, number, name) is not stated in the context, "
+            "say 'unclear from the source' or 'not stated in the provided documents'. "
+            "Do NOT guess, fabricate, or supplement with general knowledge. "
+            "It is better to say 'unclear' than to risk an inaccurate answer."
+            "\n\nExamples of how to handle borderline cases:\n\n"
             "Example 1 — Partially answerable:\n"
             "Context: 'Revenue grew 15% in Q3 2024.'\n"
             "Question: 'What was the revenue growth for each quarter?'\n"
@@ -172,9 +176,12 @@ def critic_agent(question: str, chunks: list, answer: str) -> AgentResult:
     messages = [
         SystemMessage(content=(
             "You are a strict fact-checker. Compare the answer to the source chunks. "
-            "List specific gaps, unsupported claims, or inaccuracies. "
+            "Check for: (1) gaps — important info in chunks missing from the answer, "
+            "(2) unsupported claims — statements not backed by any chunk, "
+            "(3) fabricated details — names, dates, or numbers not present in the source, "
+            "(4) missing citations — claims without [Source:] references. "
             "If the answer is fully correct and complete, say 'NO ISSUES'. "
-            "Otherwise, provide a short bulleted critique."
+            "Otherwise, provide a short bulleted critique with specific issues."
         )),
         HumanMessage(content=(
             f"Question: {question}\n\nSource Chunks:\n{context}\n\n"
