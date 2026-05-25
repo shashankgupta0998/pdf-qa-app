@@ -342,3 +342,43 @@ def test_answer_agent_prompt_contains_few_shot_examples():
 
         assert "Example" in system_msg or "example" in system_msg
         assert "Partially answerable" in system_msg or "partially" in system_msg.lower()
+
+
+def test_answer_agent_prompt_requests_citations():
+    """answer_agent system prompt instructs model to cite sources."""
+    from app import answer_agent, AgentResult
+
+    doc = Document(page_content="Python was created in 1991.", metadata={"source": "history.pdf", "page": 5})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Python was created in 1991. [Source: history.pdf, p.5]"
+        mock_model.invoke.return_value = mock_response
+
+        answer_agent("When was Python created?", chunks, [])
+
+        call_args = mock_model.invoke.call_args[0][0]
+        system_msg = call_args[0].content
+
+        assert "cite" in system_msg.lower() or "[Source:" in system_msg
+
+
+def test_refiner_agent_prompt_requests_citations():
+    """refiner_agent system prompt instructs model to preserve source citations."""
+    from app import refiner_agent, AgentResult
+
+    doc = Document(page_content="Data here.", metadata={"source": "report.pdf", "page": 2})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Refined. [Source: report.pdf, p.2]"
+        mock_model.invoke.return_value = mock_response
+
+        refiner_agent("question", chunks, "initial", "NO ISSUES", [])
+
+        call_args = mock_model.invoke.call_args[0][0]
+        system_msg = call_args[0].content
+
+        assert "cite" in system_msg.lower() or "citation" in system_msg.lower() or "[Source:" in system_msg

@@ -150,6 +150,9 @@ def answer_agent(question: str, chunks: list, history: list) -> AgentResult:
             "Context: 'The product launched in March 2024.'\n"
             "Question: 'What is the CEO salary?'\n"
             "Answer: 'This information is not present in the provided context.'"
+            "\n\nCitation requirement: For every factual claim, cite the source using "
+            "the format [Source: filename, p.N]. The source metadata is provided in "
+            "each chunk header. Example: 'Revenue grew 15% [Source: report.pdf, p.3].'"
         )),
         HumanMessage(content=f"{history_text}Context:\n{context}\n\nQuestion: {question}"),
     ]
@@ -202,6 +205,8 @@ def refiner_agent(question: str, chunks: list, answer: str, critique: str, histo
             "Incorporate the critic's feedback to fix gaps or inaccuracies. "
             "Stay strictly faithful to the context. "
             "Use the conversation history for continuity with prior questions."
+            " Preserve all source citations from the initial answer. Add citations "
+            "for any new claims. Use format [Source: filename, p.N]."
         )),
         HumanMessage(content=(
             f"{history_text}Question: {question}\n\nSource Chunks:\n{context}\n\n"
