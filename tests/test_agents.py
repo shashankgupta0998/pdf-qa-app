@@ -126,3 +126,81 @@ def test_retrieval_agent_handles_vectorstore_error():
     assert result.status == "error"
     assert result.is_retryable is True
     assert "connection refused" in result.error
+
+
+from unittest.mock import patch
+
+
+def test_answer_agent_returns_agent_result():
+    """answer_agent returns AgentResult wrapping the LLM response."""
+    from app import answer_agent, AgentResult
+
+    doc = Document(page_content="Python was created by Guido van Rossum.", metadata={})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Python was created by Guido van Rossum."
+        mock_model.invoke.return_value = mock_response
+
+        result = answer_agent("Who created Python?", chunks, [])
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "success"
+    assert result.data == "Python was created by Guido van Rossum."
+    assert result.metadata["agent"] == "answer"
+
+
+def test_answer_agent_handles_llm_error():
+    """answer_agent returns error AgentResult when LLM call fails."""
+    from app import answer_agent, AgentResult
+
+    doc = Document(page_content="Some content", metadata={})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_model.invoke.side_effect = Exception("rate limit exceeded")
+
+        result = answer_agent("question", chunks, [])
+
+    assert result.status == "error"
+    assert "rate limit" in result.error
+    assert result.is_retryable is True
+
+
+def test_critic_agent_returns_agent_result():
+    """critic_agent returns AgentResult wrapping the critique."""
+    from app import critic_agent, AgentResult
+
+    doc = Document(page_content="Content here", metadata={})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "NO ISSUES"
+        mock_model.invoke.return_value = mock_response
+
+        result = critic_agent("question", chunks, "the answer")
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "success"
+    assert result.data == "NO ISSUES"
+
+
+def test_refiner_agent_returns_agent_result():
+    """refiner_agent returns AgentResult wrapping the refined answer."""
+    from app import refiner_agent, AgentResult
+
+    doc = Document(page_content="Content here", metadata={})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Refined answer here."
+        mock_model.invoke.return_value = mock_response
+
+        result = refiner_agent("question", chunks, "initial answer", "NO ISSUES", [])
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "success"
+    assert result.data == "Refined answer here."

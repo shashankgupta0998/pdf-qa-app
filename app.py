@@ -109,10 +109,10 @@ def retrieval_agent(vectorstore: Chroma, question: str) -> AgentResult:
 
 
 # ─── Agent 3: Answer ──────────────────────────────────────────────────────
-def answer_agent(question: str, chunks: list, history: list) -> str:
+def answer_agent(question: str, chunks: list, history: list) -> AgentResult:
     print(f"\n💡 Answer Agent: Generating initial answer...")
     context = "\n\n".join(
-        f"[Chunk {i+1}]\n{c.page_content}" for i, c in enumerate(chunks)
+        f"[Chunk {i+1}]\n{doc.page_content}" for i, (doc, _score) in enumerate(chunks)
     )
     history_text = ""
     if history:
@@ -127,16 +127,20 @@ def answer_agent(question: str, chunks: list, history: list) -> str:
         )),
         HumanMessage(content=f"{history_text}Context:\n{context}\n\nQuestion: {question}"),
     ]
-    answer = model.invoke(messages).content
+    try:
+        answer = model.invoke(messages).content
+    except Exception as e:
+        print(f"   ❌ Answer generation failed: {e}")
+        return AgentResult(status="error", error=str(e), is_retryable=True, metadata={"agent": "answer"})
     print(f"   Initial answer drafted.")
-    return answer
+    return AgentResult(status="success", data=answer, metadata={"agent": "answer"})
 
 
 # ─── Agent 4: Critic ──────────────────────────────────────────────────────
-def critic_agent(question: str, chunks: list, answer: str) -> str:
+def critic_agent(question: str, chunks: list, answer: str) -> AgentResult:
     print(f"\n🧐 Critic Agent: Reviewing answer for gaps/inaccuracies...")
     context = "\n\n".join(
-        f"[Chunk {i+1}]\n{c.page_content}" for i, c in enumerate(chunks)
+        f"[Chunk {i+1}]\n{doc.page_content}" for i, (doc, _score) in enumerate(chunks)
     )
     messages = [
         SystemMessage(content=(
@@ -150,16 +154,20 @@ def critic_agent(question: str, chunks: list, answer: str) -> str:
             f"Answer to review:\n{answer}"
         )),
     ]
-    critique = model.invoke(messages).content
+    try:
+        critique = model.invoke(messages).content
+    except Exception as e:
+        print(f"   ❌ Critique failed: {e}")
+        return AgentResult(status="error", error=str(e), is_retryable=True, metadata={"agent": "critic"})
     print(f"   Critique complete.")
-    return critique
+    return AgentResult(status="success", data=critique, metadata={"agent": "critic"})
 
 
 # ─── Agent 5: Refiner ─────────────────────────────────────────────────────
-def refiner_agent(question: str, chunks: list, answer: str, critique: str, history: list) -> str:
+def refiner_agent(question: str, chunks: list, answer: str, critique: str, history: list) -> AgentResult:
     print(f"\n✨ Refiner Agent: Producing final answer...")
     context = "\n\n".join(
-        f"[Chunk {i+1}]\n{c.page_content}" for i, c in enumerate(chunks)
+        f"[Chunk {i+1}]\n{doc.page_content}" for i, (doc, _score) in enumerate(chunks)
     )
     history_text = ""
     if history:
@@ -179,9 +187,13 @@ def refiner_agent(question: str, chunks: list, answer: str, critique: str, histo
             "Write the final refined answer:"
         )),
     ]
-    refined = model.invoke(messages).content
+    try:
+        refined = model.invoke(messages).content
+    except Exception as e:
+        print(f"   ❌ Refinement failed: {e}")
+        return AgentResult(status="error", error=str(e), is_retryable=True, metadata={"agent": "refiner"})
     print(f"   Final answer ready.")
-    return refined
+    return AgentResult(status="success", data=refined, metadata={"agent": "refiner"})
 
 
 # ─── Agent 6: Orchestrator ────────────────────────────────────────────────
@@ -194,14 +206,20 @@ def orchestrator(vectorstore: Chroma, question: str, history: list) -> str:
         return f"Retrieval error: {retrieval_result.error}"
     if retrieval_result.status == "no_results":
         return "I couldn't find any relevant information in the documents to answer your question."
-    chunks = [doc for doc, score in retrieval_result.data]
+    chunks = retrieval_result.data
     initial = answer_agent(question, chunks, history)
-    critique = critic_agent(question, chunks, initial)
-    final = refiner_agent(question, chunks, initial, critique, history)
+    if initial.status == "error":
+        return f"Answer error: {initial.error}"
+    critique = critic_agent(question, chunks, initial.data)
+    if critique.status == "error":
+        return initial.data
+    final = refiner_agent(question, chunks, initial.data, critique.data, history)
+    if final.status == "error":
+        return initial.data
     print(f"\n{'='*60}")
     print("Orchestrator: Pipeline complete.")
     print(f"{'='*60}")
-    return final
+    return final.data
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────
