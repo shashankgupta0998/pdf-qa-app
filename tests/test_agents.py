@@ -254,8 +254,10 @@ def test_orchestrator_runs_full_pipeline_on_success():
     assert isinstance(result, AgentResult)
     assert result.status == "success"
     assert len(result.data) > 0
-    # model.invoke called 3 times: answer, critic, refiner
-    assert mock_model.invoke.call_count == 3
+    # With retry loop: 1 answer + (MAX_REFINE_RETRIES+1) critic + (MAX_REFINE_RETRIES+1) refiner
+    from app import MAX_REFINE_RETRIES
+    expected = 1 + (MAX_REFINE_RETRIES + 1) + (MAX_REFINE_RETRIES + 1)
+    assert mock_model.invoke.call_count == expected
 
 
 def test_orchestrator_degrades_gracefully_on_critic_failure():
@@ -423,3 +425,82 @@ def test_critic_agent_checks_for_fabrication():
         system_msg = call_args[0].content
 
         assert "fabricat" in system_msg.lower() or "invented" in system_msg.lower() or "not in the source" in system_msg.lower()
+
+
+def test_orchestrator_retries_when_critic_finds_issues():
+    """orchestrator retries refiner when critic finds issues, up to MAX_REFINE_RETRIES."""
+    from app import orchestrator, AgentResult, MAX_REFINE_RETRIES
+
+    mock_vectorstore = MagicMock()
+    doc = Document(page_content="Python was created by Guido.", metadata={"source": "test.pdf", "page": 0})
+    mock_vectorstore.similarity_search_with_relevance_scores.return_value = [
+        (doc, 0.92),
+    ]
+
+    call_count = 0
+
+    def invoke_side_effect(messages):
+        nonlocal call_count
+        call_count += 1
+        mock_resp = MagicMock()
+        if call_count == 1:
+            # answer agent
+            mock_resp.content = "Initial answer."
+        elif call_count % 2 == 0:
+            # critic calls — always find issues (to trigger retries)
+            mock_resp.content = "ISSUE: Missing detail about year."
+        else:
+            # refiner calls
+            mock_resp.content = f"Refined answer attempt {call_count}."
+        return mock_resp
+
+    with patch("app.model") as mock_model:
+        mock_model.invoke.side_effect = invoke_side_effect
+        result = orchestrator(mock_vectorstore, "Who created Python?", [])
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "success"
+    # 1 answer + (MAX_REFINE_RETRIES + 1) critic + (MAX_REFINE_RETRIES + 1) refiner
+    expected_calls = 1 + (MAX_REFINE_RETRIES + 1) + (MAX_REFINE_RETRIES + 1)
+    assert mock_model.invoke.call_count == expected_calls
+    assert result.metadata.get("retries", 0) == MAX_REFINE_RETRIES
+
+
+def test_orchestrator_stops_retrying_when_critic_approves():
+    """orchestrator stops retry loop when critic says NO ISSUES."""
+    from app import orchestrator, AgentResult
+
+    mock_vectorstore = MagicMock()
+    doc = Document(page_content="Python was created by Guido.", metadata={"source": "test.pdf", "page": 0})
+    mock_vectorstore.similarity_search_with_relevance_scores.return_value = [
+        (doc, 0.92),
+    ]
+
+    call_count = 0
+
+    def invoke_side_effect(messages):
+        nonlocal call_count
+        call_count += 1
+        mock_resp = MagicMock()
+        if call_count == 1:
+            mock_resp.content = "Initial answer."
+        elif call_count == 2:
+            # first critic — finds issue
+            mock_resp.content = "ISSUE: missing year."
+        elif call_count == 3:
+            # first refiner
+            mock_resp.content = "Python was created by Guido in 1991."
+        elif call_count == 4:
+            # second critic — approves
+            mock_resp.content = "NO ISSUES"
+        return mock_resp
+
+    with patch("app.model") as mock_model:
+        mock_model.invoke.side_effect = invoke_side_effect
+        result = orchestrator(mock_vectorstore, "Who created Python?", [])
+
+    assert result.status == "success"
+    assert result.data == "Python was created by Guido in 1991."
+    # Should have stopped: 1 answer + 2 critics + 1 refiner = 4 calls
+    assert mock_model.invoke.call_count == 4
+    assert result.metadata.get("retries", 0) == 1

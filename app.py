@@ -27,6 +27,7 @@ CHROMA_DIR = "chroma_db"
 DOCS_DIR = "documents"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 SIMILARITY_THRESHOLD = 0.35
+MAX_REFINE_RETRIES = 2
 
 
 def build_context(chunks: list) -> str:
@@ -261,22 +262,41 @@ def orchestrator(vectorstore: Chroma, question: str, history: list) -> AgentResu
     if initial.status == "error":
         return initial
 
-    critique = critic_agent(question, chunks, initial.data)
-    if critique.status == "error":
-        initial.metadata["degraded"] = True
-        initial.metadata["failed_stage"] = "critic"
-        return initial
+    current_answer = initial.data
+    retries = 0
 
-    final = refiner_agent(question, chunks, initial.data, critique.data, history)
-    if final.status == "error":
-        initial.metadata["degraded"] = True
-        initial.metadata["failed_stage"] = "refiner"
-        return initial
+    for attempt in range(MAX_REFINE_RETRIES + 1):
+        critique = critic_agent(question, chunks, current_answer)
+        if critique.status == "error":
+            result = AgentResult(status="success", data=current_answer, metadata={"agent": "orchestrator"})
+            result.metadata["degraded"] = True
+            result.metadata["failed_stage"] = "critic"
+            result.metadata["retries"] = retries
+            return result
+
+        if "NO ISSUES" in critique.data.upper():
+            print(f"   Critic approved on attempt {attempt + 1}.")
+            break
+
+        print(f"   🔄 Critic found issues (attempt {attempt + 1}/{MAX_REFINE_RETRIES + 1}), retrying refinement...")
+        refined = refiner_agent(question, chunks, current_answer, critique.data, history)
+        if refined.status == "error":
+            result = AgentResult(status="success", data=current_answer, metadata={"agent": "orchestrator"})
+            result.metadata["degraded"] = True
+            result.metadata["failed_stage"] = "refiner"
+            result.metadata["retries"] = retries
+            return result
+        current_answer = refined.data
+        retries += 1
 
     print(f"\n{'='*60}")
     print("Orchestrator: Pipeline complete.")
     print(f"{'='*60}")
-    return final
+    return AgentResult(
+        status="success",
+        data=current_answer,
+        metadata={"agent": "orchestrator", "retries": min(retries, MAX_REFINE_RETRIES)},
+    )
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────
