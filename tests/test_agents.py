@@ -552,3 +552,27 @@ def test_answer_agent_includes_persistent_facts():
 
         assert "ESTABLISHED FACTS" in human_msg
         assert "$2.5M" in human_msg or "2.5M" in human_msg
+
+
+def test_refiner_agent_includes_persistent_facts():
+    """refiner_agent injects persistent facts block when history has facts."""
+    from app import refiner_agent, AgentResult
+
+    doc = Document(page_content="Q4 revenue was $3M.", metadata={"source": "report.pdf", "page": 1})
+    chunks = [(doc, 0.9)]
+    history = [
+        {"question": "What was Q3 revenue?", "answer": "Q3 revenue was $2.5M."},
+    ]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Refined answer."
+        mock_model.invoke.return_value = mock_response
+
+        refiner_agent("What about Q4?", chunks, "initial", "NO ISSUES", history)
+
+        call_args = mock_model.invoke.call_args[0][0]
+        human_msg = call_args[1].content
+
+        assert "ESTABLISHED FACTS" in human_msg
+        assert "$2.5M" in human_msg or "2.5M" in human_msg

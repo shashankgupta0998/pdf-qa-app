@@ -1,5 +1,6 @@
 import os
 import glob
+import re
 import shutil
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
@@ -30,7 +31,7 @@ SIMILARITY_THRESHOLD = 0.35
 MAX_REFINE_RETRIES = 2
 
 
-def build_context(chunks: list) -> str:
+def build_context(chunks: list[tuple[Any, float]]) -> str:
     sorted_chunks = sorted(chunks, key=lambda x: x[1], reverse=True)
     sections = []
     for i, (doc, score) in enumerate(sorted_chunks):
@@ -41,10 +42,9 @@ def build_context(chunks: list) -> str:
     return "\n\n".join(sections)
 
 
-def extract_facts(history: list) -> str:
+def extract_facts(history: list[dict[str, str]]) -> str:
     if not history:
         return ""
-    import re
     facts = []
     for entry in history:
         answer = entry["answer"]
