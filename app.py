@@ -8,6 +8,17 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
+from dataclasses import dataclass, field
+
+
+@dataclass
+class AgentResult:
+    status: str  # "success" | "error" | "no_results"
+    data: any = None
+    error: str | None = None
+    is_retryable: bool = False
+    metadata: dict = field(default_factory=dict)
+
 
 load_dotenv()
 
