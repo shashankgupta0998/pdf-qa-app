@@ -28,6 +28,18 @@ DOCS_DIR = "documents"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 SIMILARITY_THRESHOLD = 0.35
 
+
+def build_context(chunks: list) -> str:
+    sorted_chunks = sorted(chunks, key=lambda x: x[1], reverse=True)
+    sections = []
+    for i, (doc, score) in enumerate(sorted_chunks):
+        label = "[Most Relevant]" if i == 0 else "[Supporting]"
+        src = os.path.basename(doc.metadata.get("source", "unknown"))
+        pg = doc.metadata.get("page", "?")
+        sections.append(f"{label} (Source: {src}, p.{pg}, score: {score:.2f})\n{doc.page_content}")
+    return "\n\n".join(sections)
+
+
 model = ChatGroq(
     model="llama-3.1-8b-instant",
     api_key=os.getenv("GROQ_API_KEY"),
@@ -112,9 +124,7 @@ def retrieval_agent(vectorstore: Chroma, question: str) -> AgentResult:
 # ─── Agent 3: Answer ──────────────────────────────────────────────────────
 def answer_agent(question: str, chunks: list, history: list) -> AgentResult:
     print(f"\n💡 Answer Agent: Generating initial answer...")
-    context = "\n\n".join(
-        f"[Chunk {i+1}]\n{doc.page_content}" for i, (doc, _score) in enumerate(chunks)
-    )
+    context = build_context(chunks)
     history_text = ""
     if history:
         history_text = "Conversation History:\n" + "\n".join(
@@ -140,9 +150,7 @@ def answer_agent(question: str, chunks: list, history: list) -> AgentResult:
 # ─── Agent 4: Critic ──────────────────────────────────────────────────────
 def critic_agent(question: str, chunks: list, answer: str) -> AgentResult:
     print(f"\n🧐 Critic Agent: Reviewing answer for gaps/inaccuracies...")
-    context = "\n\n".join(
-        f"[Chunk {i+1}]\n{doc.page_content}" for i, (doc, _score) in enumerate(chunks)
-    )
+    context = build_context(chunks)
     messages = [
         SystemMessage(content=(
             "You are a strict fact-checker. Compare the answer to the source chunks. "
@@ -167,9 +175,7 @@ def critic_agent(question: str, chunks: list, answer: str) -> AgentResult:
 # ─── Agent 5: Refiner ─────────────────────────────────────────────────────
 def refiner_agent(question: str, chunks: list, answer: str, critique: str, history: list) -> AgentResult:
     print(f"\n✨ Refiner Agent: Producing final answer...")
-    context = "\n\n".join(
-        f"[Chunk {i+1}]\n{doc.page_content}" for i, (doc, _score) in enumerate(chunks)
-    )
+    context = build_context(chunks)
     history_text = ""
     if history:
         history_text = "Conversation History:\n" + "\n".join(

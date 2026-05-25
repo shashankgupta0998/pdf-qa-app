@@ -289,3 +289,35 @@ def test_orchestrator_degrades_gracefully_on_critic_failure():
     assert result.data == "Initial answer from answer agent."
     assert result.metadata.get("degraded") is True
     assert result.metadata.get("failed_stage") == "critic"
+
+
+def test_build_context_sorts_by_score_and_labels():
+    """build_context sorts chunks by score descending and labels them."""
+    from app import build_context
+
+    doc1 = Document(page_content="Low relevance", metadata={"source": "a.pdf", "page": 0})
+    doc2 = Document(page_content="High relevance", metadata={"source": "b.pdf", "page": 1})
+    doc3 = Document(page_content="Mid relevance", metadata={"source": "a.pdf", "page": 2})
+    chunks = [(doc1, 0.40), (doc2, 0.95), (doc3, 0.60)]
+
+    context = build_context(chunks)
+
+    lines = context.split("\n")
+    assert "[Most Relevant]" in context
+    assert "[Supporting]" in context
+    high_pos = context.index("High relevance")
+    low_pos = context.index("Low relevance")
+    assert high_pos < low_pos
+
+
+def test_build_context_includes_source_metadata():
+    """build_context includes source filename and page in each chunk header."""
+    from app import build_context
+
+    doc = Document(page_content="Some text", metadata={"source": "/path/to/report.pdf", "page": 3})
+    chunks = [(doc, 0.85)]
+
+    context = build_context(chunks)
+
+    assert "report.pdf" in context
+    assert "p.3" in context
