@@ -9,12 +9,13 @@ from langchain_chroma import Chroma
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from dataclasses import dataclass, field
+from typing import Any, Literal
 
 
 @dataclass
 class AgentResult:
-    status: str  # "success" | "error" | "no_results"
-    data: any = None
+    status: Literal["success", "error", "no_results"]
+    data: Any = None
     error: str | None = None
     is_retryable: bool = False
     metadata: dict = field(default_factory=dict)
@@ -229,11 +230,15 @@ def orchestrator(vectorstore: Chroma, question: str, history: list) -> AgentResu
 
     critique = critic_agent(question, chunks, initial.data)
     if critique.status == "error":
-        return initial  # return the initial answer if critic fails
+        initial.metadata["degraded"] = True
+        initial.metadata["failed_stage"] = "critic"
+        return initial
 
     final = refiner_agent(question, chunks, initial.data, critique.data, history)
     if final.status == "error":
-        return initial  # return initial answer if refiner fails
+        initial.metadata["degraded"] = True
+        initial.metadata["failed_stage"] = "refiner"
+        return initial
 
     print(f"\n{'='*60}")
     print("Orchestrator: Pipeline complete.")

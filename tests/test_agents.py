@@ -1,6 +1,3 @@
-from dataclasses import dataclass
-
-
 def test_agent_result_success():
     """AgentResult can represent a successful result with data."""
     from app import AgentResult
@@ -259,3 +256,36 @@ def test_orchestrator_runs_full_pipeline_on_success():
     assert len(result.data) > 0
     # model.invoke called 3 times: answer, critic, refiner
     assert mock_model.invoke.call_count == 3
+
+
+def test_orchestrator_degrades_gracefully_on_critic_failure():
+    """orchestrator returns initial answer with degraded flag when critic fails."""
+    from app import orchestrator, AgentResult
+
+    mock_vectorstore = MagicMock()
+    doc = Document(page_content="Python was created by Guido.", metadata={"source": "test.pdf", "page": 0})
+    mock_vectorstore.similarity_search_with_relevance_scores.return_value = [
+        (doc, 0.92),
+    ]
+
+    call_count = 0
+
+    def invoke_side_effect(messages):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            mock_resp = MagicMock()
+            mock_resp.content = "Initial answer from answer agent."
+            return mock_resp
+        # Second call is critic — fail it
+        raise Exception("API timeout")
+
+    with patch("app.model") as mock_model:
+        mock_model.invoke.side_effect = invoke_side_effect
+        result = orchestrator(mock_vectorstore, "Who created Python?", [])
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "success"
+    assert result.data == "Initial answer from answer agent."
+    assert result.metadata.get("degraded") is True
+    assert result.metadata.get("failed_stage") == "critic"
