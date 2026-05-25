@@ -321,3 +321,24 @@ def test_build_context_includes_source_metadata():
 
     assert "report.pdf" in context
     assert "p.3" in context
+
+
+def test_answer_agent_prompt_contains_few_shot_examples():
+    """answer_agent system prompt includes few-shot examples for borderline cases."""
+    from app import answer_agent, AgentResult
+
+    doc = Document(page_content="Revenue grew 15% in Q3.", metadata={"source": "report.pdf", "page": 1})
+    chunks = [(doc, 0.9)]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Revenue grew 15%."
+        mock_model.invoke.return_value = mock_response
+
+        answer_agent("What was Q3 revenue?", chunks, [])
+
+        call_args = mock_model.invoke.call_args[0][0]
+        system_msg = call_args[0].content
+
+        assert "Example" in system_msg or "example" in system_msg
+        assert "Partially answerable" in system_msg or "partially" in system_msg.lower()

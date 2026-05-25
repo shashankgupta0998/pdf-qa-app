@@ -134,7 +134,22 @@ def answer_agent(question: str, chunks: list, history: list) -> AgentResult:
         SystemMessage(content=(
             "You answer questions strictly from the provided PDF context. "
             "If the answer is not in the context, say so. Be concise and factual. "
-            "Use the conversation history to understand follow-up questions."
+            "Use the conversation history to understand follow-up questions.\n\n"
+            "Examples of how to handle borderline cases:\n\n"
+            "Example 1 — Partially answerable:\n"
+            "Context: 'Revenue grew 15% in Q3 2024.'\n"
+            "Question: 'What was the revenue growth for each quarter?'\n"
+            "Answer: 'The context only mentions Q3 2024, which saw 15% revenue growth. "
+            "Growth figures for other quarters are not provided in the source material.'\n\n"
+            "Example 2 — Related but not directly answering:\n"
+            "Context: 'The company hired 200 engineers in 2024.'\n"
+            "Question: 'What is the total headcount?'\n"
+            "Answer: 'The context mentions 200 engineers were hired in 2024, but does not "
+            "state the total headcount. I cannot determine this from the available information.'\n\n"
+            "Example 3 — Completely unanswerable:\n"
+            "Context: 'The product launched in March 2024.'\n"
+            "Question: 'What is the CEO salary?'\n"
+            "Answer: 'This information is not present in the provided context.'"
         )),
         HumanMessage(content=f"{history_text}Context:\n{context}\n\nQuestion: {question}"),
     ]
