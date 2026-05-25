@@ -197,29 +197,48 @@ def refiner_agent(question: str, chunks: list, answer: str, critique: str, histo
 
 
 # ─── Agent 6: Orchestrator ────────────────────────────────────────────────
-def orchestrator(vectorstore: Chroma, question: str, history: list) -> str:
+def orchestrator(vectorstore: Chroma, question: str, history: list) -> AgentResult:
     print(f"\n{'='*60}")
     print(f"🧠 Orchestrator: Pipeline for: {question!r}")
     print(f"{'='*60}")
-    retrieval_result = retrieval_agent(vectorstore, question)
-    if retrieval_result.status == "error":
-        return f"Retrieval error: {retrieval_result.error}"
-    if retrieval_result.status == "no_results":
-        return "I couldn't find any relevant information in the documents to answer your question."
-    chunks = retrieval_result.data
+
+    retrieval = retrieval_agent(vectorstore, question)
+
+    if retrieval.status == "error":
+        print(f"\n{'='*60}")
+        print(f"Orchestrator: Pipeline aborted — retrieval error.")
+        print(f"{'='*60}")
+        return retrieval
+
+    if retrieval.status == "no_results":
+        msg = f"I couldn't find any relevant information in the loaded PDFs to answer: \"{question}\""
+        print(f"\n{'='*60}")
+        print(f"Orchestrator: No relevant chunks — skipping answer pipeline.")
+        print(f"{'='*60}")
+        return AgentResult(
+            status="no_results",
+            data=msg,
+            metadata={"agent": "orchestrator", "reason": "retrieval_below_threshold"},
+        )
+
+    chunks = retrieval.data
+
     initial = answer_agent(question, chunks, history)
     if initial.status == "error":
-        return f"Answer error: {initial.error}"
+        return initial
+
     critique = critic_agent(question, chunks, initial.data)
     if critique.status == "error":
-        return initial.data
+        return initial  # return the initial answer if critic fails
+
     final = refiner_agent(question, chunks, initial.data, critique.data, history)
     if final.status == "error":
-        return initial.data
+        return initial  # return initial answer if refiner fails
+
     print(f"\n{'='*60}")
     print("Orchestrator: Pipeline complete.")
     print(f"{'='*60}")
-    return final.data
+    return final
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────
@@ -243,9 +262,10 @@ def main():
             history.clear()
             print("🗑️  Conversation history cleared.")
             continue
-        final = orchestrator(vectorstore, q, history)
-        history.append({"question": q, "answer": final})
-        print(f"\n📄 FINAL ANSWER:\n{final}\n")
+        result = orchestrator(vectorstore, q, history)
+        answer_text = result.data if result.data else f"[{result.status}] {result.error}"
+        history.append({"question": q, "answer": answer_text})
+        print(f"\n📄 FINAL ANSWER:\n{answer_text}\n")
 
     print("Goodbye.")
 

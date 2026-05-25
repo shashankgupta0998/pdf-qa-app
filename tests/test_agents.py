@@ -204,3 +204,58 @@ def test_refiner_agent_returns_agent_result():
     assert isinstance(result, AgentResult)
     assert result.status == "success"
     assert result.data == "Refined answer here."
+
+
+def test_orchestrator_short_circuits_on_no_results():
+    """orchestrator returns a friendly message when retrieval finds nothing relevant."""
+    from app import orchestrator, AgentResult
+
+    mock_vectorstore = MagicMock()
+    doc = Document(page_content="Irrelevant", metadata={"source": "test.pdf", "page": 0})
+    mock_vectorstore.similarity_search_with_relevance_scores.return_value = [
+        (doc, 0.10),
+    ]
+
+    result = orchestrator(mock_vectorstore, "What is quantum computing?", [])
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "no_results"
+    assert "not found" in result.data.lower() or "no relevant" in result.data.lower() or "couldn't find" in result.data.lower()
+
+
+def test_orchestrator_short_circuits_on_retrieval_error():
+    """orchestrator returns error when retrieval fails."""
+    from app import orchestrator, AgentResult
+
+    mock_vectorstore = MagicMock()
+    mock_vectorstore.similarity_search_with_relevance_scores.side_effect = Exception("disk full")
+
+    result = orchestrator(mock_vectorstore, "Any question", [])
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "error"
+    assert "disk full" in result.error
+
+
+def test_orchestrator_runs_full_pipeline_on_success():
+    """orchestrator runs all agents when retrieval returns good chunks."""
+    from app import orchestrator, AgentResult
+
+    mock_vectorstore = MagicMock()
+    doc = Document(page_content="Python was created by Guido.", metadata={"source": "test.pdf", "page": 0})
+    mock_vectorstore.similarity_search_with_relevance_scores.return_value = [
+        (doc, 0.92),
+    ]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Python was created by Guido van Rossum."
+        mock_model.invoke.return_value = mock_response
+
+        result = orchestrator(mock_vectorstore, "Who created Python?", [])
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "success"
+    assert len(result.data) > 0
+    # model.invoke called 3 times: answer, critic, refiner
+    assert mock_model.invoke.call_count == 3
