@@ -263,9 +263,19 @@ def main():
             print("🗑️  Conversation history cleared.")
             continue
         result = orchestrator(vectorstore, q, history)
-        answer_text = result.data if result.data else f"[{result.status}] {result.error}"
-        history.append({"question": q, "answer": answer_text})
-        print(f"\n📄 FINAL ANSWER:\n{answer_text}\n")
+
+        if result.status == "error":
+            print(f"\n⚠️  Error: {result.error}")
+            if result.is_retryable:
+                print("   This may be a temporary issue. Try again.")
+            continue
+
+        if result.status == "no_results":
+            print(f"\n📄 {result.data}\n")
+            continue
+
+        history.append({"question": q, "answer": result.data})
+        print(f"\n📄 FINAL ANSWER:\n{result.data}\n")
 
     print("Goodbye.")
 
