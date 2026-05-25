@@ -1,5 +1,5 @@
 import os
-import sys
+import glob
 import shutil
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 load_dotenv()
 
 CHROMA_DIR = "chroma_db"
+DOCS_DIR = "documents"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 model = ChatGroq(
@@ -21,19 +22,32 @@ model = ChatGroq(
 
 
 # ─── Agent 1: Ingestion ───────────────────────────────────────────────────
-def ingestion_agent(pdf_path: str) -> Chroma:
-    print(f"\n📥 Ingestion Agent: Loading '{pdf_path}'...")
+def ingestion_agent() -> Chroma:
+    os.makedirs(DOCS_DIR, exist_ok=True)
+    pdf_files = glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
+
+    if not pdf_files:
+        print(f"\n❌ No PDF files found in '{DOCS_DIR}/' folder.")
+        print(f"   Place your PDF files in the '{DOCS_DIR}/' folder and restart.")
+        raise SystemExit(1)
+
     if os.path.exists(CHROMA_DIR):
         shutil.rmtree(CHROMA_DIR)
 
-    loader = PyPDFLoader(pdf_path)
-    docs = loader.load()
-    print(f"   Loaded {len(docs)} pages.")
+    print(f"\n📥 Ingestion Agent: Loading {len(pdf_files)} PDF(s) from '{DOCS_DIR}/'...")
+    all_docs = []
+    for pdf_path in pdf_files:
+        loader = PyPDFLoader(pdf_path)
+        docs = loader.load()
+        print(f"   ✓ {os.path.basename(pdf_path)} — {len(docs)} pages")
+        all_docs.extend(docs)
+
+    print(f"   Total: {len(all_docs)} pages across {len(pdf_files)} file(s).")
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000, chunk_overlap=150
     )
-    chunks = splitter.split_documents(docs)
+    chunks = splitter.split_documents(all_docs)
     print(f"   Split into {len(chunks)} chunks.")
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
@@ -53,17 +67,23 @@ def retrieval_agent(vectorstore: Chroma, question: str) -> list:
 
 
 # ─── Agent 3: Answer ──────────────────────────────────────────────────────
-def answer_agent(question: str, chunks: list) -> str:
+def answer_agent(question: str, chunks: list, history: list) -> str:
     print(f"\n💡 Answer Agent: Generating initial answer...")
     context = "\n\n".join(
         f"[Chunk {i+1}]\n{c.page_content}" for i, c in enumerate(chunks)
     )
+    history_text = ""
+    if history:
+        history_text = "Conversation History:\n" + "\n".join(
+            f"Q: {h['question']}\nA: {h['answer']}" for h in history
+        ) + "\n\n"
     messages = [
         SystemMessage(content=(
             "You answer questions strictly from the provided PDF context. "
-            "If the answer is not in the context, say so. Be concise and factual."
+            "If the answer is not in the context, say so. Be concise and factual. "
+            "Use the conversation history to understand follow-up questions."
         )),
-        HumanMessage(content=f"Context:\n{context}\n\nQuestion: {question}"),
+        HumanMessage(content=f"{history_text}Context:\n{context}\n\nQuestion: {question}"),
     ]
     answer = model.invoke(messages).content
     print(f"   Initial answer drafted.")
@@ -94,19 +114,25 @@ def critic_agent(question: str, chunks: list, answer: str) -> str:
 
 
 # ─── Agent 5: Refiner ─────────────────────────────────────────────────────
-def refiner_agent(question: str, chunks: list, answer: str, critique: str) -> str:
+def refiner_agent(question: str, chunks: list, answer: str, critique: str, history: list) -> str:
     print(f"\n✨ Refiner Agent: Producing final answer...")
     context = "\n\n".join(
         f"[Chunk {i+1}]\n{c.page_content}" for i, c in enumerate(chunks)
     )
+    history_text = ""
+    if history:
+        history_text = "Conversation History:\n" + "\n".join(
+            f"Q: {h['question']}\nA: {h['answer']}" for h in history
+        ) + "\n\n"
     messages = [
         SystemMessage(content=(
             "You produce a final, high-accuracy answer grounded in the source chunks. "
             "Incorporate the critic's feedback to fix gaps or inaccuracies. "
-            "Stay strictly faithful to the context."
+            "Stay strictly faithful to the context. "
+            "Use the conversation history for continuity with prior questions."
         )),
         HumanMessage(content=(
-            f"Question: {question}\n\nSource Chunks:\n{context}\n\n"
+            f"{history_text}Question: {question}\n\nSource Chunks:\n{context}\n\n"
             f"Initial Answer:\n{answer}\n\nCritic Feedback:\n{critique}\n\n"
             "Write the final refined answer:"
         )),
@@ -117,14 +143,14 @@ def refiner_agent(question: str, chunks: list, answer: str, critique: str) -> st
 
 
 # ─── Agent 6: Orchestrator ────────────────────────────────────────────────
-def orchestrator(vectorstore: Chroma, question: str) -> str:
+def orchestrator(vectorstore: Chroma, question: str, history: list) -> str:
     print(f"\n{'='*60}")
     print(f"🧠 Orchestrator: Pipeline for: {question!r}")
     print(f"{'='*60}")
     chunks = retrieval_agent(vectorstore, question)
-    initial = answer_agent(question, chunks)
+    initial = answer_agent(question, chunks, history)
     critique = critic_agent(question, chunks, initial)
-    final = refiner_agent(question, chunks, initial, critique)
+    final = refiner_agent(question, chunks, initial, critique, history)
     print(f"\n{'='*60}")
     print("Orchestrator: Pipeline complete.")
     print(f"{'='*60}")
@@ -133,18 +159,11 @@ def orchestrator(vectorstore: Chroma, question: str) -> str:
 
 # ─── CLI ──────────────────────────────────────────────────────────────────
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python app.py <path_to_pdf>")
-        sys.exit(1)
-
-    pdf_path = sys.argv[1]
-    if not os.path.isfile(pdf_path):
-        print(f"File not found: {pdf_path}")
-        sys.exit(1)
-
-    vectorstore = ingestion_agent(pdf_path)
+    vectorstore = ingestion_agent()
+    history = []
 
     print("\nReady. Type a question (or 'quit' to exit).")
+    print("Type 'clear history' to reset conversation context.")
     while True:
         try:
             q = input("\n❓ Question: ").strip()
@@ -155,7 +174,12 @@ def main():
             continue
         if q.lower() in {"quit", "exit", "q"}:
             break
-        final = orchestrator(vectorstore, q)
+        if q.lower() == "clear history":
+            history.clear()
+            print("🗑️  Conversation history cleared.")
+            continue
+        final = orchestrator(vectorstore, q, history)
+        history.append({"question": q, "answer": final})
         print(f"\n📄 FINAL ANSWER:\n{final}\n")
 
     print("Goodbye.")
