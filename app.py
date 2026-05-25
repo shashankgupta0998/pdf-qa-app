@@ -41,6 +41,28 @@ def build_context(chunks: list) -> str:
     return "\n\n".join(sections)
 
 
+def extract_facts(history: list) -> str:
+    if not history:
+        return ""
+    import re
+    facts = []
+    for entry in history:
+        answer = entry["answer"]
+        for sentence in answer.replace(". ", ".\n").split("\n"):
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            has_specifics = bool(re.search(
+                r'\$[\d.,]+|\d{4}|\d+%|[A-Z][a-z]+ [A-Z][a-z]+',
+                sentence
+            ))
+            if has_specifics:
+                facts.append(sentence)
+    if not facts:
+        return ""
+    return "--- ESTABLISHED FACTS (from prior answers) ---\n" + "\n".join(f"• {f}" for f in facts) + "\n--- END FACTS ---"
+
+
 model = ChatGroq(
     model="llama-3.1-8b-instant",
     api_key=os.getenv("GROQ_API_KEY"),
@@ -131,6 +153,9 @@ def answer_agent(question: str, chunks: list, history: list) -> AgentResult:
         history_text = "Conversation History:\n" + "\n".join(
             f"Q: {h['question']}\nA: {h['answer']}" for h in history
         ) + "\n\n"
+    facts_block = extract_facts(history)
+    if facts_block:
+        history_text = facts_block + "\n\n" + history_text
     messages = [
         SystemMessage(content=(
             "You answer questions strictly from the provided PDF context. "
@@ -207,6 +232,9 @@ def refiner_agent(question: str, chunks: list, answer: str, critique: str, histo
         history_text = "Conversation History:\n" + "\n".join(
             f"Q: {h['question']}\nA: {h['answer']}" for h in history
         ) + "\n\n"
+    facts_block = extract_facts(history)
+    if facts_block:
+        history_text = facts_block + "\n\n" + history_text
     messages = [
         SystemMessage(content=(
             "You produce a final, high-accuracy answer grounded in the source chunks. "

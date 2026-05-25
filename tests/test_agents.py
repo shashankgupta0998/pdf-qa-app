@@ -504,3 +504,51 @@ def test_orchestrator_stops_retrying_when_critic_approves():
     # Should have stopped: 1 answer + 2 critics + 1 refiner = 4 calls
     assert mock_model.invoke.call_count == 4
     assert result.metadata.get("retries", 0) == 1
+
+
+def test_extract_facts_extracts_key_information():
+    """extract_facts pulls key facts from conversation history."""
+    from app import extract_facts
+
+    history = [
+        {"question": "What is the company name?", "answer": "The company is Acme Corp."},
+        {"question": "What was Q3 revenue?", "answer": "Q3 revenue was $2.5M."},
+        {"question": "Who is the CEO?", "answer": "The CEO is Jane Smith."},
+    ]
+
+    facts = extract_facts(history)
+
+    assert "Acme Corp" in facts
+    assert "$2.5M" in facts or "2.5M" in facts
+    assert "Jane Smith" in facts
+
+
+def test_extract_facts_empty_history():
+    """extract_facts returns empty string for empty history."""
+    from app import extract_facts
+
+    assert extract_facts([]) == ""
+
+
+def test_answer_agent_includes_persistent_facts():
+    """answer_agent injects persistent facts block when history has facts."""
+    from app import answer_agent, AgentResult
+
+    doc = Document(page_content="Q4 revenue was $3M.", metadata={"source": "report.pdf", "page": 1})
+    chunks = [(doc, 0.9)]
+    history = [
+        {"question": "What was Q3 revenue?", "answer": "Q3 revenue was $2.5M."},
+    ]
+
+    with patch("app.model") as mock_model:
+        mock_response = MagicMock()
+        mock_response.content = "Q4 revenue was $3M."
+        mock_model.invoke.return_value = mock_response
+
+        answer_agent("What about Q4?", chunks, history)
+
+        call_args = mock_model.invoke.call_args[0][0]
+        human_msg = call_args[1].content
+
+        assert "ESTABLISHED FACTS" in human_msg
+        assert "$2.5M" in human_msg or "2.5M" in human_msg
